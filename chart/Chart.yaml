@@ -1,0 +1,17 @@
+apiVersion: v2
+name: openclaw
+description: openclaw LanguageAgentRuntime for the Language Operator
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+keywords:
+  - ai
+  - llm
+  - agents
+  - openclaw
+home: https://github.com/language-operator/openclaw-adapter
+sources:
+  - https://github.com/language-operator/openclaw-adapter
+maintainers:
+  - name: James Ryan
+    email: james@theryans.io

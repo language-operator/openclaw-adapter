@@ -1,0 +1,38 @@
+# openclaw LanguageAgentRuntime — a cluster-scoped runtime preset.
+# Requires the language-operator chart (which provides the LanguageAgentRuntime
+# CRD) to be installed first.
+
+# Main runtime image — the upstream openclaw release (not built by this repo).
+image:
+  repository: ghcr.io/openclaw/openclaw
+  tag: latest
+
+# Init/adapter image built by this repo. Translates the operator's
+# /etc/agent/config.yaml into openclaw's native provider config.
+adapter:
+  image:
+    repository: ghcr.io/language-operator/openclaw-adapter
+    tag: latest
+    # pullPolicy for the adapter init container. Leave empty to inherit the
+    # cluster default; set to Never in local development.
+    pullPolicy: ""
+
+# Agents using this runtime sit behind the cluster OIDC proxy (when the cluster
+# enables auth).
+auth:
+  enabled: true
+
+# Gateway port openclaw listens on.
+port: 18789
+
+workspace:
+  size: 10Gi
+  mountPath: /workspace
+
+resources:
+  requests:
+    memory: 512Mi
+    cpu: 250m
+  limits:
+    memory: 2Gi
+    cpu: 1000m
