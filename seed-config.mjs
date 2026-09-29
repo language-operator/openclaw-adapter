@@ -124,6 +124,29 @@ const gatewayConfig = {
 const configTools = operatorConfig?.tools ?? {}
 const mcpServers = {}
 
+// `$(NAME)` in a header value is an environment variable of the agent
+// container (spec.tools[].headers, language-operator#922). openclaw expands
+// `${NAME}` from its own environment when it connects, so the reference is
+// rewritten rather than resolved and the token is never written into
+// openclaw.json. A header whose variable is unset is dropped with a warning,
+// never sent as `$(NAME)` literally.
+const ENV_REF = /\$\(([A-Za-z_][A-Za-z0-9_]*)\)/g
+function renderHeaders(toolName, headers) {
+  if (headers == null || typeof headers !== 'object' || Array.isArray(headers)) return null
+  const out = {}
+  for (const [name, raw] of Object.entries(headers)) {
+    if (raw == null || typeof raw === 'object') continue
+    const value = String(raw)
+    const missing = [...value.matchAll(ENV_REF)].map((m) => m[1]).filter((ref) => !process.env[ref])
+    if (missing.length > 0) {
+      console.warn(`Tool '${toolName}' header '${name}' references unset environment variable(s) ${missing.join(', ')} — not sent`)
+      continue
+    }
+    out[name] = value.replace(ENV_REF, (_, ref) => '${' + ref + '}')
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
+
 for (const [toolName, tool] of Object.entries(configTools)) {
   if (!tool.endpoint) {
     console.warn(`Tool '${toolName}' has no endpoint — skipping`)
@@ -133,8 +156,14 @@ for (const [toolName, tool] of Object.entries(configTools)) {
     console.warn(`Tool '${toolName}' endpoint '${tool.endpoint}' is not an HTTP URL — skipping`)
     continue
   }
-  mcpServers[toolName] = { url: tool.endpoint }
-  console.log(`Configured MCP server '${toolName}' → ${tool.endpoint}`)
+  const server = { url: tool.endpoint }
+  const headers = renderHeaders(toolName, tool.headers)
+  if (headers) {
+    server.transport = 'streamable-http'
+    server.headers = headers
+  }
+  mcpServers[toolName] = server
+  console.log(`Configured MCP server '${toolName}' → ${tool.endpoint}${headers ? ` (${Object.keys(headers).length} header(s))` : ''}`)
 }
 
 if (existsSync(configFile)) {
