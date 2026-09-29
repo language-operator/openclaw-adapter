@@ -146,6 +146,11 @@ tools:
     protocol: mcp
     headers:
       Authorization: Bearer $(CONTROL_PLANE_TOKEN)
+  partial:
+    endpoint: https://other.example.com/mcp
+    protocol: mcp
+    headers:
+      Authorization: Bearer $(CONTROL_PLANE_TOKEN)
       X-Optional: $(MISSING_TOKEN)
   in-cluster:
     endpoint: http://tool.default.svc.cluster.local:8080/mcp
@@ -161,8 +166,8 @@ assert "header written as \${NAME} reference"  "grep -q 'Bearer \${CONTROL_PLANE
 assert "token value never written"            "! grep -q 's3cret-value' /tmp/t5/state/openclaw.json"
 assert "operator syntax translated"           "! grep -q '\$(CONTROL_PLANE_TOKEN)' /tmp/t5/state/openclaw.json"
 assert "streamable-http transport set"        "grep -q 'streamable-http' /tmp/t5/state/openclaw.json"
-assert "unset header dropped"                 "! grep -q 'X-Optional' /tmp/t5/state/openclaw.json"
-assert "unset header warned"                  "grep -q 'MISSING_TOKEN' /tmp/t5/out.txt"
+assert "server with unset header not configured" "! grep -q 'other.example.com' /tmp/t5/state/openclaw.json"
+assert "unset header warned"                  "grep -q 'partial.*X-Optional.*MISSING_TOKEN' /tmp/t5/out.txt"
 assert "in-cluster tool has no headers"       "node -e 'const c=require(\"/tmp/t5/state/openclaw.json\"); process.exit(c.mcp.servers[\"in-cluster\"].headers ? 1 : 0)'"
 
 # ---------------------------------------------------------------------------
