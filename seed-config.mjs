@@ -124,6 +124,33 @@ const gatewayConfig = {
 const configTools = operatorConfig?.tools ?? {}
 const mcpServers = {}
 
+// `$(NAME)` in a header value is an environment variable of the agent
+// container (spec.tools[].headers, language-operator#922). openclaw expands
+// `${NAME}` from its own environment when it connects, so the reference is
+// rewritten rather than resolved and the token is never written into
+// openclaw.json. Rendering is all-or-nothing: if any header references an
+// unset (or empty) variable the server is left out with one warning, never
+// configured without auth to 401 unexplained, and `$(NAME)` is never sent
+// literally. Returns undefined for "no headers", null for "unrenderable".
+const envRef = () => /\$\(([A-Za-z_][A-Za-z0-9_]*)\)/g
+const isSet = (ref) => Object.hasOwn(process.env, ref) && process.env[ref] !== ''
+function renderHeaders(toolName, headers) {
+  if (headers == null || typeof headers !== 'object' || Array.isArray(headers)) return undefined
+  const out = {}
+  const unset = []
+  for (const [name, raw] of Object.entries(headers)) {
+    if (raw == null || typeof raw === 'object') continue
+    const value = String(raw)
+    for (const m of value.matchAll(envRef())) if (!isSet(m[1])) unset.push(`${name} ($(${m[1]}))`)
+    out[name] = value.replace(envRef(), (_, ref) => '${' + ref + '}')
+  }
+  if (unset.length > 0) {
+    console.warn(`Tool '${toolName}' header(s) ${unset.join(', ')} reference unset environment variable(s) — server not configured`)
+    return null
+  }
+  return Object.keys(out).length > 0 ? out : undefined
+}
+
 for (const [toolName, tool] of Object.entries(configTools)) {
   if (!tool.endpoint) {
     console.warn(`Tool '${toolName}' has no endpoint — skipping`)
@@ -133,8 +160,15 @@ for (const [toolName, tool] of Object.entries(configTools)) {
     console.warn(`Tool '${toolName}' endpoint '${tool.endpoint}' is not an HTTP URL — skipping`)
     continue
   }
-  mcpServers[toolName] = { url: tool.endpoint }
-  console.log(`Configured MCP server '${toolName}' → ${tool.endpoint}`)
+  const server = { url: tool.endpoint }
+  const headers = renderHeaders(toolName, tool.headers)
+  if (headers === null) continue
+  if (headers) {
+    server.transport = 'streamable-http'
+    server.headers = headers
+  }
+  mcpServers[toolName] = server
+  console.log(`Configured MCP server '${toolName}' → ${tool.endpoint}${headers ? ` (${Object.keys(headers).length} header(s))` : ''}`)
 }
 
 if (existsSync(configFile)) {
