@@ -7,8 +7,9 @@
  * bootstrap files.
  *
  * On subsequent runs (openclaw.json already exists), only operator-managed sections
- * are updated: gateway config and mcp.servers. All other user runtime state is
- * preserved. Bootstrap files (AGENTS.md, SOUL.md) are always overwritten.
+ * are updated: gateway config, mcp.servers, and the model providers the seeder
+ * owns. All other user runtime state is preserved. Bootstrap files (AGENTS.md,
+ * SOUL.md) are always overwritten.
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
@@ -171,8 +172,62 @@ for (const [toolName, tool] of Object.entries(configTools)) {
   console.log(`Configured MCP server '${toolName}' → ${tool.endpoint}${headers ? ` (${Object.keys(headers).length} header(s))` : ''}`)
 }
 
+// -------------------------------------------------------------------
+// Build models.providers from config.yaml models section.
+// Fall back to MODEL_ENDPOINT / LLM_MODEL env vars if absent.
+// Built before the existsSync branch for the same reason as mcp.servers:
+// the operator's providers are re-applied on every boot, so a model change
+// on the agent reaches an existing openclaw.json.
+// -------------------------------------------------------------------
+// Placeholder key: the LiteLLM proxy handles real auth. Every provider this
+// seeder writes carries it, which is how the merge below tells the
+// operator's providers apart from ones the user added.
+const PROXY_API_KEY = 'sk-langop-proxy'
+const configModels = operatorConfig?.models ?? {}
+const providers = {}
+
+if (Object.keys(configModels).length > 0) {
+  // Primary source: config.yaml models section
+  // Each key is the LanguageModel CRD name; value has .provider, .model, .endpoint
+  for (const [crdName, model] of Object.entries(configModels)) {
+    if (!model.endpoint) {
+      console.warn(`Model '${crdName}' has no endpoint — skipping`)
+      continue
+    }
+    providers[crdName] = {
+      baseUrl: model.endpoint,
+      apiKey: PROXY_API_KEY,
+      api: 'openai-completions',   // LiteLLM exposes OpenAI-compatible API
+      models: [
+        { id: model.model ?? crdName, name: model.model ?? crdName },
+      ],
+    }
+    console.log(`Configured model provider '${crdName}' → ${model.endpoint}`)
+  }
+} else {
+  // Fallback: zip MODEL_ENDPOINT + LLM_MODEL env vars
+  const endpoints = (process.env.MODEL_ENDPOINT ?? '').split(',').map(s => s.trim()).filter(Boolean)
+  const modelNames = (process.env.LLM_MODEL ?? '').split(',').map(s => s.trim()).filter(Boolean)
+
+  if (endpoints.length === 0) {
+    console.warn('MODEL_ENDPOINT is not set and config.yaml has no models — seeding without model config')
+  }
+
+  for (let i = 0; i < endpoints.length; i++) {
+    const providerKey = modelNames[i] ?? `model-${i}`
+    const modelId = modelNames[i] ?? providerKey
+    providers[providerKey] = {
+      baseUrl: endpoints[i],
+      apiKey: PROXY_API_KEY,
+      api: 'openai-completions',
+      models: [{ id: modelId, name: modelId }],
+    }
+    console.log(`Configured model provider '${providerKey}' → ${endpoints[i]} (from env vars)`)
+  }
+}
+
 if (existsSync(configFile)) {
-  console.log(`openclaw.json already exists at ${configFile}, merging gateway config and mcp.servers`)
+  console.log(`openclaw.json already exists at ${configFile}, merging operator-managed sections`)
   let existing = {}
   try {
     existing = JSON.parse(readFileSync(configFile, 'utf8'))
@@ -196,56 +251,46 @@ if (existsSync(configFile)) {
     delete existing.mcp
     console.log('No tools in config.yaml — cleared mcp.servers')
   }
+  // Replace the operator's providers; keep any the user added (another apiKey)
+  // and every other key under models.
+  const models = existing.models ?? {}
+  const kept = {}
+  const dropped = new Set()
+  for (const [key, provider] of Object.entries(models.providers ?? {})) {
+    if (provider?.apiKey === PROXY_API_KEY) dropped.add(key)
+    else kept[key] = provider
+  }
+  const merged = { ...kept, ...providers }
+  if (Object.keys(merged).length > 0) {
+    models.providers = merged
+  } else {
+    delete models.providers
+  }
+  if (Object.keys(models).length > 0) {
+    existing.models = models
+  } else {
+    delete existing.models
+  }
+  console.log(`Updated models.providers with ${Object.keys(providers).length} operator model(s)`)
+  // A primary model the operator no longer provides (its provider is gone, or
+  // the provider no longer lists that model) would leave the agent calling a
+  // model that doesn't exist. Drop it, which is the first-boot state: the
+  // seeder never sets a primary. A primary on a user-added provider is kept.
+  const primary = existing.agents?.defaults?.model?.primary
+  if (typeof primary === 'string' && primary.includes('/')) {
+    const provider = primary.slice(0, primary.indexOf('/'))
+    const modelId = primary.slice(provider.length + 1)
+    const current = merged[provider]
+    const stale = dropped.has(provider) &&
+      (!current || (current.apiKey === PROXY_API_KEY && !current.models.some(m => m.id === modelId)))
+    if (stale) {
+      delete existing.agents.defaults.model.primary
+      console.log(`Cleared primary model '${primary}' — the operator no longer provides it`)
+    }
+  }
   writeFileSync(configFile, JSON.stringify(existing, null, 2))
-  console.log('Merged gateway config and mcp.servers into existing openclaw.json')
+  console.log('Merged gateway config, mcp.servers and models.providers into existing openclaw.json')
   process.exit(0)
-}
-
-// -------------------------------------------------------------------
-// Build models.providers from config.yaml models section.
-// Fall back to MODEL_ENDPOINT / LLM_MODEL env vars if absent.
-// -------------------------------------------------------------------
-const configModels = operatorConfig?.models ?? {}
-const providers = {}
-
-if (Object.keys(configModels).length > 0) {
-  // Primary source: config.yaml models section
-  // Each key is the LanguageModel CRD name; value has .provider, .model, .endpoint
-  for (const [crdName, model] of Object.entries(configModels)) {
-    if (!model.endpoint) {
-      console.warn(`Model '${crdName}' has no endpoint — skipping`)
-      continue
-    }
-    providers[crdName] = {
-      baseUrl: model.endpoint,
-      apiKey: 'sk-langop-proxy',  // placeholder; LiteLLM proxy handles real auth
-      api: 'openai-completions',   // LiteLLM exposes OpenAI-compatible API
-      models: [
-        { id: model.model ?? crdName, name: model.model ?? crdName },
-      ],
-    }
-    console.log(`Configured model provider '${crdName}' → ${model.endpoint}`)
-  }
-} else {
-  // Fallback: zip MODEL_ENDPOINT + LLM_MODEL env vars
-  const endpoints = (process.env.MODEL_ENDPOINT ?? '').split(',').map(s => s.trim()).filter(Boolean)
-  const modelNames = (process.env.LLM_MODEL ?? '').split(',').map(s => s.trim()).filter(Boolean)
-
-  if (endpoints.length === 0) {
-    console.warn('MODEL_ENDPOINT is not set and config.yaml has no models — seeding without model config')
-  }
-
-  for (let i = 0; i < endpoints.length; i++) {
-    const providerKey = modelNames[i] ?? `model-${i}`
-    const modelId = modelNames[i] ?? providerKey
-    providers[providerKey] = {
-      baseUrl: endpoints[i],
-      apiKey: 'sk-langop-proxy',
-      api: 'openai-completions',
-      models: [{ id: modelId, name: modelId }],
-    }
-    console.log(`Configured model provider '${providerKey}' → ${endpoints[i]} (from env vars)`)
-  }
 }
 
 // -------------------------------------------------------------------

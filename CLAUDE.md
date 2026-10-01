@@ -15,7 +15,7 @@ The seeder writes openclaw's config format, so an upstream openclaw release can 
 
 - `seed-config.mjs`: the whole seeder (Node, one dependency: `yaml`).
   - On first boot it writes `openclaw.json` (gateway, `mcp.servers`, `models.providers`).
-  - On later boots it rewrites only the operator-managed sections (gateway and `mcp.servers`) and keeps the rest of the user's runtime state.
+  - On later boots it rewrites only the operator-managed sections (gateway, `mcp.servers`, and its own model providers, recognised by their `sk-langop-proxy` placeholder key) and keeps the rest of the user's runtime state. It also clears a primary model that no longer exists.
   - It always overwrites `AGENTS.md` and `SOUL.md` from the personas.
   - Model config comes from `config.yaml`, or from the `MODEL_ENDPOINT`/`LLM_MODEL` env vars if `config.yaml` has none.
 - `test.sh`: shell tests that run *inside* the built image, one scenario per `--- Test N` block. Add a scenario for any new seed behaviour.

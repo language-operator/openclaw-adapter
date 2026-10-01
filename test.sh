@@ -170,6 +170,65 @@ assert "server with unset header not configured" "! grep -q 'other.example.com' 
 assert "unset header warned"                  "grep -q 'partial.*X-Optional.*MISSING_TOKEN' /tmp/t5/out.txt"
 assert "in-cluster tool has no headers"       "node -e 'const c=require(\"/tmp/t5/state/openclaw.json\"); process.exit(c.mcp.servers[\"in-cluster\"].headers ? 1 : 0)'"
 
+
+# ---------------------------------------------------------------------------
+# Test 6: model change between boots (operator providers re-applied)
+# ---------------------------------------------------------------------------
+echo "--- Test 6: model change between boots ---"
+
+set_config << 'EOF2'
+models:
+  gpt:
+    model: gpt-4o
+    endpoint: http://gpt.default.svc.cluster.local:8000
+EOF2
+
+mkdir -p /tmp/t6/state
+AGENT_NAME=test-agent OPENCLAW_STATE_DIR=/tmp/t6/state \
+  node /app/seed-config.mjs > /tmp/t6/out1.txt 2>&1
+
+# Runtime state written between boots: a user-added provider, a primary model
+# on the operator's provider, and an unrelated user key.
+node -e '
+const f = "/tmp/t6/state/openclaw.json"
+const c = require(f)
+c.models.providers.mine = { baseUrl: "http://mine", apiKey: "user-key", api: "openai-completions", models: [{ id: "m", name: "m" }] }
+c.agents.defaults = { model: { primary: "gpt/gpt-4o" } }
+c.preserved = true
+require("fs").writeFileSync(f, JSON.stringify(c))
+'
+
+set_config << 'EOF2'
+models:
+  claude-sonnet:
+    model: claude-sonnet-4-5
+    endpoint: http://claude-sonnet.default.svc.cluster.local:8000
+EOF2
+
+AGENT_NAME=test-agent OPENCLAW_STATE_DIR=/tmp/t6/state \
+  node /app/seed-config.mjs > /tmp/t6/out2.txt 2>&1
+
+j() { node -e "const c=require('/tmp/t6/state/openclaw.json'); process.exit(($1) ? 0 : 1)"; }
+assert "new provider applied"          "j 'c.models.providers[\"claude-sonnet\"].models[0].id === \"claude-sonnet-4-5\"'"
+assert "old operator provider removed" "j '!c.models.providers.gpt'"
+assert "user provider kept"            "j 'c.models.providers.mine.apiKey === \"user-key\"'"
+assert "stale primary cleared"         "j '!c.agents.defaults.model.primary'"
+assert "user state preserved"          "j 'c.preserved === true'"
+assert "providers update logged"       "grep -q 'Updated models.providers' /tmp/t6/out2.txt"
+
+# A primary on a user-added provider survives a re-seed.
+node -e '
+const f = "/tmp/t6/state/openclaw.json"
+const c = require(f)
+c.agents.defaults.model.primary = "mine/m"
+require("fs").writeFileSync(f, JSON.stringify(c))
+'
+AGENT_NAME=test-agent OPENCLAW_STATE_DIR=/tmp/t6/state \
+  node /app/seed-config.mjs > /tmp/t6/out3.txt 2>&1
+clear_config
+
+assert "user primary kept"             "j 'c.agents.defaults.model.primary === \"mine/m\"'"
+
 # ---------------------------------------------------------------------------
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
