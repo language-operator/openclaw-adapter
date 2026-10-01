@@ -21,10 +21,6 @@ spec:
       protocol: TCP
       expose: true
 
-  workspace:
-    size: {{ .Values.workspace.size }}
-    mountPath: {{ .Values.workspace.mountPath }}
-
   deployment:
     # Override the default CMD to bind on all interfaces and start in the
     # cloned repo directory when AGENT_REPO_DIR is injected by the operator
@@ -47,7 +43,7 @@ spec:
             value: /workspace/.openclaw
         volumeMounts:
           - name: workspace
-            mountPath: {{ .Values.workspace.mountPath }}
+            mountPath: /workspace
 
     env:
       - name: OPENCLAW_HOME
