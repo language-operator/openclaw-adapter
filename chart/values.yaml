@@ -15,7 +15,7 @@ image:
 adapter:
   image:
     repository: ghcr.io/language-operator/openclaw-adapter
-    tag: latest
+    tag: "0.1.1"
     # pullPolicy for the adapter init container. Leave empty to inherit the
     # cluster default; set to Never in local development.
     pullPolicy: ""
