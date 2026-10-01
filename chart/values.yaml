@@ -3,12 +3,15 @@
 # CRD) to be installed first.
 
 # Main runtime image — the upstream openclaw release (not built by this repo).
+# Pinned: seed-config.mjs writes openclaw's config format, so a new upstream
+# release must arrive through a chart change. Move it with /update-dependencies.
 image:
   repository: ghcr.io/openclaw/openclaw
-  tag: latest
+  tag: "2026.9.7"
 
 # Init/adapter image built by this repo. Translates the operator's
 # /etc/agent/config.yaml into openclaw's native provider config.
+# The tag moves with the chart version in lockstep; /release sets it.
 adapter:
   image:
     repository: ghcr.io/language-operator/openclaw-adapter
