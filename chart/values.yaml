@@ -25,10 +25,6 @@ auth:
 # Gateway port openclaw listens on.
 port: 18789
 
-workspace:
-  size: 10Gi
-  mountPath: /workspace
-
 resources:
   requests:
     memory: 512Mi
