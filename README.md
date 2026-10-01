@@ -52,5 +52,11 @@ helm template openclaw chart
 ## CI
 
 - `build-image.yaml` — builds and pushes the adapter image to `ghcr.io` on push to `main` and `v*` tags.
-- `release-chart.yaml` — packages `chart/` and pushes it to `oci://ghcr.io/language-operator/charts`.
+- `release-chart.yaml` — on `v*` tags only, packages `chart/` and pushes it to `oci://ghcr.io/language-operator/charts`. Refuses to overwrite a version that is already published.
+
+## Releasing
+
+Run `/release major|minor|patch` in Claude Code (`.claude/commands/release.md`). It bumps
+`chart/Chart.yaml` `version`/`appVersion` and `adapter.image.tag` in lockstep, tags `vX.Y.Z`,
+and — after you confirm — pushes the commit and tag, which publishes the image and chart.
 - `test.yaml` — builds the image, runs the smoke tests, and lints/templates the chart on every PR.
