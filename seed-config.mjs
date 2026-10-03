@@ -10,6 +10,10 @@
  * are updated: gateway config, mcp.servers, and the model providers the seeder
  * owns. All other user runtime state is preserved. Bootstrap files (AGENTS.md,
  * SOUL.md) are always overwritten.
+ *
+ * Model providers authenticate to the gateway with the agent's own key: when
+ * MODEL_API_KEY is set, apiKey is the reference ${MODEL_API_KEY}, which
+ * openclaw expands from its environment, so the key is never written to disk.
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from 'fs'
@@ -179,10 +183,21 @@ for (const [toolName, tool] of Object.entries(configTools)) {
 // the operator's providers are re-applied on every boot, so a model change
 // on the agent reaches an existing openclaw.json.
 // -------------------------------------------------------------------
-// Placeholder key: the LiteLLM proxy handles real auth. Every provider this
-// seeder writes carries it, which is how the merge below tells the
-// operator's providers apart from ones the user added.
+// Gateway credential. The operator injects the agent's gateway key as
+// MODEL_API_KEY (language-operator#909); the gateway rejects anything else
+// once it enforces keys. Write a reference rather than the key: openclaw
+// expands ${VAR} in config strings from its own environment, which also has
+// MODEL_API_KEY, so the key stays off the PVC and a rotation needs no re-seed.
+// Without MODEL_API_KEY (older operators), keep the placeholder.
+// Every provider this seeder writes carries one of these two values, which is
+// how the merge below tells the operator's providers apart from the user's.
 const PROXY_API_KEY = 'sk-langop-proxy'
+const GATEWAY_KEY_REF = '${MODEL_API_KEY}'
+const isOperatorKey = (key) => key === PROXY_API_KEY || key === GATEWAY_KEY_REF
+const apiKey = process.env.MODEL_API_KEY ? GATEWAY_KEY_REF : PROXY_API_KEY
+console.log(process.env.MODEL_API_KEY
+  ? "Model providers use the agent's gateway key (MODEL_API_KEY)"
+  : 'MODEL_API_KEY not set — model providers use the placeholder key')
 const configModels = operatorConfig?.models ?? {}
 const providers = {}
 
@@ -196,7 +211,7 @@ if (Object.keys(configModels).length > 0) {
     }
     providers[crdName] = {
       baseUrl: model.endpoint,
-      apiKey: PROXY_API_KEY,
+      apiKey,
       api: 'openai-completions',   // LiteLLM exposes OpenAI-compatible API
       models: [
         { id: model.model ?? crdName, name: model.model ?? crdName },
@@ -218,7 +233,7 @@ if (Object.keys(configModels).length > 0) {
     const modelId = modelNames[i] ?? providerKey
     providers[providerKey] = {
       baseUrl: endpoints[i],
-      apiKey: PROXY_API_KEY,
+      apiKey,
       api: 'openai-completions',
       models: [{ id: modelId, name: modelId }],
     }
@@ -251,13 +266,13 @@ if (existsSync(configFile)) {
     delete existing.mcp
     console.log('No tools in config.yaml — cleared mcp.servers')
   }
-  // Replace the operator's providers; keep any the user added (another apiKey)
+  // Replace the operator's providers; keep any the user added (any other apiKey)
   // and every other key under models.
   const models = existing.models ?? {}
   const kept = {}
   const dropped = new Set()
   for (const [key, provider] of Object.entries(models.providers ?? {})) {
-    if (provider?.apiKey === PROXY_API_KEY) dropped.add(key)
+    if (isOperatorKey(provider?.apiKey)) dropped.add(key)
     else kept[key] = provider
   }
   const merged = { ...kept, ...providers }
@@ -282,7 +297,7 @@ if (existsSync(configFile)) {
     const modelId = primary.slice(provider.length + 1)
     const current = merged[provider]
     const stale = dropped.has(provider) &&
-      (!current || (current.apiKey === PROXY_API_KEY && !current.models.some(m => m.id === modelId)))
+      (!current || (isOperatorKey(current.apiKey) && !current.models.some(m => m.id === modelId)))
     if (stale) {
       delete existing.agents.defaults.model.primary
       console.log(`Cleared primary model '${primary}' — the operator no longer provides it`)

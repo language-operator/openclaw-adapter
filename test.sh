@@ -230,6 +230,46 @@ clear_config
 assert "user primary kept"             "j 'c.agents.defaults.model.primary === \"mine/m\"'"
 
 # ---------------------------------------------------------------------------
+# Test 7: gateway key from MODEL_API_KEY (written as a reference, never the value)
+# ---------------------------------------------------------------------------
+echo "--- Test 7: gateway key from MODEL_API_KEY ---"
+
+set_config << 'EOF2'
+models:
+  claude-sonnet:
+    model: claude-sonnet-4-5
+    endpoint: http://claude-sonnet.default.svc.cluster.local:8000
+EOF2
+
+mkdir -p /tmp/t7/state
+AGENT_NAME=test-agent OPENCLAW_STATE_DIR=/tmp/t7/state MODEL_API_KEY=sk-langop-abc.s3cretsig \
+  node /app/seed-config.mjs > /tmp/t7/out1.txt 2>&1
+
+k() { node -e "const c=require('$1'); process.exit(($2) ? 0 : 1)"; }
+assert "apiKey is the \${MODEL_API_KEY} reference" "k /tmp/t7/state/openclaw.json 'c.models.providers[\"claude-sonnet\"].apiKey === \"\${MODEL_API_KEY}\"'"
+assert "key value never written"            "! grep -q 's3cretsig' /tmp/t7/state/openclaw.json"
+assert "key value never logged"             "! grep -q 's3cretsig' /tmp/t7/out1.txt"
+assert "placeholder not used"               "! grep -q 'sk-langop-proxy' /tmp/t7/state/openclaw.json"
+
+# Upgrade: seeded with the placeholder by an older operator, re-seeded with a key.
+mkdir -p /tmp/t7/upgrade
+AGENT_NAME=test-agent OPENCLAW_STATE_DIR=/tmp/t7/upgrade \
+  node /app/seed-config.mjs > /tmp/t7/out2.txt 2>&1
+node -e '
+const f = "/tmp/t7/upgrade/openclaw.json"
+const c = require(f)
+c.models.providers.mine = { baseUrl: "http://mine", apiKey: "user-key", api: "openai-completions", models: [{ id: "m", name: "m" }] }
+require("fs").writeFileSync(f, JSON.stringify(c))
+'
+AGENT_NAME=test-agent OPENCLAW_STATE_DIR=/tmp/t7/upgrade MODEL_API_KEY=sk-langop-abc.s3cretsig \
+  node /app/seed-config.mjs > /tmp/t7/out3.txt 2>&1
+clear_config
+
+assert "upgrade: provider switched to the reference" "k /tmp/t7/upgrade/openclaw.json 'c.models.providers[\"claude-sonnet\"].apiKey === \"\${MODEL_API_KEY}\"'"
+assert "upgrade: no placeholder provider left"       "! grep -q 'sk-langop-proxy' /tmp/t7/upgrade/openclaw.json"
+assert "upgrade: user provider kept"                 "k /tmp/t7/upgrade/openclaw.json 'c.models.providers.mine.apiKey === \"user-key\"'"
+
+# ---------------------------------------------------------------------------
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [ "$FAIL" -eq 0 ] || exit 1
