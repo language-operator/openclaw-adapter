@@ -22,14 +22,14 @@ The seeder writes openclaw's config format, so an upstream openclaw release can 
 - `Dockerfile`: `node:24-alpine` + `seed-config.mjs` + `test.sh`.
 - `chart/`: `templates/languageagentruntime.yaml` is the runtime preset. `values.yaml` pins the upstream `image.tag` and this repo's `adapter.image.tag`.
 
-## Commands
+## Testing
 
-```bash
-make test                                          # build the image, run /app/test.sh in it
-helm lint chart && helm template openclaw chart    # chart checks
-```
+Mirror the PR CI jobs in `.github/workflows/test.yaml`:
 
-These mirror the PR CI jobs `image-test` and `chart-lint` in `.github/workflows/test.yaml`. There is no JS linter.
+- `image-test`: `make test`. Builds the adapter image and runs `/app/test.sh` inside it (one scenario per `--- Test N` block against `seed-config.mjs`). Add a scenario to `test.sh` for any new seed behaviour.
+- `chart-lint`: `helm lint chart && helm template openclaw chart >/dev/null`
+- There is no JS linter.
+- The PR title must be a conventional commit (`feat:`, `fix:`, `chore:`, `docs:`, `test:`).
 
 ## Versioning and releases
 
@@ -41,5 +41,19 @@ These mirror the PR CI jobs `image-test` and `chart-lint` in `.github/workflows/
 
 ## Workflow
 
-- `/iterate [#N]` takes one issue through worktree → PR → green CI → merge → close.
-- The scripts in `.claude/commands/iterate/`, and everything in `iterate.md` except the `allowed-tools` build tools and `## Testing`, are copied verbatim from language-operator (canonical per language-operator#932). Change them there, not here.
+`/iterate [#N] [--auto]` handles **one** issue, from selection to a merged PR and a closed issue, then stops. For continuous work, use `/loop /iterate`. Work happens inside a git worktree under `.claude/worktrees/`.
+
+It comes from the shared `langop` plugin in [`language-operator/skills`](https://github.com/language-operator/skills), pinned to a tag in `.claude/settings.json`. There is no copy in this repo any more. `/iterate` and `/langop:iterate` both run it. The skill has nothing repo-specific in it: it reads `## Testing` above to learn how to test a change here, so keep that section accurate.
+
+Interactive sessions need no install step: the plugin loads at the pinned tag once the folder is trusted. Non-interactive runs (`claude -p`, scheduled or in-cluster agents) have no trust dialog, so they need this once, with the tag the repo pins:
+
+```bash
+claude plugin marketplace add 'language-operator/skills#v0.1.0'
+claude plugin install langop@language-operator --scope project
+```
+
+Two things to avoid:
+- A marketplace add without `#<tag>` follows `main` instead of the pin.
+- `--scope project` on the *marketplace* add rewrites `.claude/settings.json` and drops its `ref`.
+
+To take a newer release, change `ref` in `.claude/settings.json`. Machine-specific settings go in `.claude/settings.local.json` (git-ignored).
